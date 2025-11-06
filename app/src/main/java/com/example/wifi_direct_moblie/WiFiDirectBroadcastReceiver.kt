@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.net.wifi.p2p.WifiP2pManager
 import android.widget.Toast
+import android.net.NetworkInfo
 
 class WiFiDirectBroadcastReceiver(
     private val manager: WifiP2pManager,
@@ -18,8 +19,10 @@ class WiFiDirectBroadcastReceiver(
                 val state = intent.getIntExtra(WifiP2pManager.EXTRA_WIFI_STATE, -1)
                 if (state == WifiP2pManager.WIFI_P2P_STATE_ENABLED) {
                     Toast.makeText(context, "Wi-Fi Direct 켜짐", Toast.LENGTH_SHORT).show()
+                    activity.updateWifiDirectStatus(state == WifiP2pManager.WIFI_P2P_STATE_ENABLED)
                 } else {
                     Toast.makeText(context, "Wi-Fi Direct 꺼짐", Toast.LENGTH_SHORT).show()
+                    activity.updateWifiDirectStatus(state == WifiP2pManager.WIFI_P2P_STATE_ENABLED)
                 }
             }
 
@@ -33,8 +36,15 @@ class WiFiDirectBroadcastReceiver(
             // [중요] Wi-Fi P2P 연결 상태 변경
             WifiP2pManager.WIFI_P2P_CONNECTION_CHANGED_ACTION -> {
                 // 연결 상태가 변경됨
-                // (7단계에서 자세히 다룸)
-                manager.requestConnectionInfo(channel, activity) // 연결 정보 요청
+                val networkInfo = intent.getParcelableExtra<NetworkInfo>(WifiP2pManager.EXTRA_NETWORK_INFO)
+
+                if (networkInfo?.isConnected == true) {
+                    // 연결됨 -> MainActivity에 연결 정보 요청
+                    manager.requestConnectionInfo(channel, activity)
+                } else {
+                    // 연결 끊김 -> MainActivity UI 초기화
+                    activity.clearConnectionInfo()
+                }
             }
 
             // 이 기기의 P2P 정보 변경

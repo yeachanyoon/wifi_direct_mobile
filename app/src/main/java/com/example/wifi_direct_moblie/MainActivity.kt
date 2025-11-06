@@ -12,14 +12,22 @@ import android.content.IntentFilter
 import android.net.wifi.WpsInfo
 import android.net.wifi.p2p.*
 import android.util.Log
-import android.widget.ArrayAdapter
-import android.widget.Button
-import android.widget.ListView
-import android.widget.Toast
-import android.widget.TextView
+import android.widget.*
+import android.widget.ImageView // [!] import 추가
+import androidx.activity.result.contract.ActivityResultContracts // [!] import 추가
+import com.google.zxing.BarcodeFormat // [!] import 추가
+import com.google.zxing.MultiFormatWriter // [!] import 추가
+import com.journeyapps.barcodescanner.ScanContract // [!] import 추가
+import com.journeyapps.barcodescanner.ScanOptions // [!] import 추가
+import android.graphics.Bitmap // [!] import 추가
+import android.net.ConnectivityManager // [!] import 추가
+import android.net.Network // [!] import 추가
+import android.net.NetworkCapabilities // [!] import 추가
+import android.net.NetworkRequest // [!] import 추가
+import android.net.wifi.WifiNetworkSpecifier // [!] import 추가
 // import androidx.core.content.ContextCompat.getSystemService // 원본 파일에 있었으나 사용되지 않음
 
-class MainActivity : AppCompatActivity(), WifiP2pManager.PeerListListener, WifiP2pManager.ConnectionInfoListener {
+class MainActivity : AppCompatActivity(), WifiP2pManager.PeerListListener, WifiP2pManager.ConnectionInfoListener, WifiP2pManager.GroupInfoListener {
     lateinit var manager: WifiP2pManager
     lateinit var channel: WifiP2pManager.Channel
     private val intentFilter = IntentFilter()
@@ -31,6 +39,12 @@ class MainActivity : AppCompatActivity(), WifiP2pManager.PeerListListener, WifiP
     private val peerDeviceList = mutableListOf<WifiP2pDevice>() // 기기 원본 목록
     private val peerDeviceNames = mutableListOf<String>()      // 기기 이름 목록 (UI 표시용)
     // --- [ 변수 추가 끝 ] ---
+    // [!] 1. TextView 변수 추가
+    lateinit var statusTextView: TextView
+    lateinit var connectionInfoTextView: TextView
+    lateinit var qrCodeImageView: ImageView //이미지
+    lateinit var emptyView: TextView
+
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -56,7 +70,17 @@ class MainActivity : AppCompatActivity(), WifiP2pManager.PeerListListener, WifiP
             startPeerDiscovery()
         }
         // --- [수정 완료] ---
+        // --- [!] QR 버튼 리스너 추가 ---
+        val createGroupButton = findViewById<Button>(R.id.createGroupButton)
+        createGroupButton.setOnClickListener {
+            createGroup()
+        }
 
+        val scanQRButton = findViewById<Button>(R.id.scanQRButton)
+        scanQRButton.setOnClickListener {
+            startQRScanner()
+        }
+        // --- [ 리스너 추가 끝 ] ---
         // --- [ 2. ListView 및 어댑터 초기화 ] ---
         peerListView = findViewById(R.id.peerListView)
         // 간단한 기본 리스트 아이템 템플릿 사용
@@ -72,6 +96,10 @@ class MainActivity : AppCompatActivity(), WifiP2pManager.PeerListListener, WifiP
             // 해당 기기에 연결 시도
             connectToPeer(selectedDevice)
         }
+        // [!] 2. TextView 초기화
+        statusTextView = findViewById(R.id.statusTextView)
+        connectionInfoTextView = findViewById(R.id.connectionInfoTextView)
+        qrCodeImageView = findViewById(R.id.qrCodeImageView) // [!] 추가
         // Android 13 (TIRAMISU) 이상 런타임 권한 요청 (권한 요청만 IF문 안에 둠)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             if (ActivityCompat.checkSelfPermission(this, Manifest.permission.NEARBY_WIFI_DEVICES)
@@ -197,12 +225,213 @@ class MainActivity : AppCompatActivity(), WifiP2pManager.PeerListListener, WifiP
         if (info.groupFormed && info.isGroupOwner) {
             // [역할: 서버 (Group Owner)]
             Log.d("WiFiDirect", "나는 그룹 오너 (서버) 입니다.")
+            connectionInfoTextView.text = "Role: Server (Group Owner)" // [!] 텍스트 업데이트
             // 예: startServerTask()
 
         } else if (info.groupFormed) {
             // [역할: 클라이언트]
             Log.d("WiFiDirect", "나는 클라이언트 입니다. 서버 IP: $groupOwnerAddress")
+            connectionInfoTextView.text = "Role: Client\nServer IP: $groupOwnerAddress" // [!] 텍스트 업데이트
             // 예: startClientSocketTask(groupOwnerAddress)
         }
     }
-} // <-- [!] 원본 파일에 있던 불필요한 } 제거됨
+
+    /** Wi-Fi Direct 활성화 상태 텍스트 업데이트 */
+    fun updateWifiDirectStatus(isEnabled: Boolean) {
+        statusTextView.text = if (isEnabled) {
+            "Wi-Fi Direct: Enabled"
+        } else {
+            "Wi-Fi Direct: Disabled"
+        }
+    }
+
+    /** 연결 정보 텍스트 초기화 (연결 끊겼을 때) */
+    fun clearConnectionInfo() {
+        connectionInfoTextView.text = "Connection: None"
+    }
+    // --- [!] 4. QR 코드 관련 변수 및 함수들 추가 ---
+
+    // [!] QR 스캐너 실행 및 결과 처리를 위한 런처
+    private val qrScannerLauncher = registerForActivityResult(ScanContract()) { result ->
+        if (result.contents != null) {
+            // QR 코드 스캔 성공
+            val scannedData = result.contents
+            Log.d("WiFiDirect", "Scanned data: $scannedData")
+
+            // "WIFI:T:WPA;S:SSID;P:PASSWORD;;" 형식 파싱 시도
+            try {
+                // S:(SSID) 와 P:(PASSWORD) 사이의 값을 추출
+                val ssid = scannedData.substringAfter("S:").substringBefore(";")
+                val password = scannedData.substringAfter("P:").substringBefore(";")
+
+                if (ssid.isEmpty() || password.isEmpty()) {
+                    throw Exception("Invalid format")
+                }
+
+                Toast.makeText(this, "Connecting to $ssid...", Toast.LENGTH_SHORT).show()
+                // 5단계: 스캔한 정보로 Wi-Fi Direct 그룹에 연결
+                connectToWifiDirectGroup(ssid, password)
+
+            } catch (e: Exception) {
+                Log.e("WiFiDirect", "Invalid QR Code format: $scannedData", e)
+                Toast.makeText(this, "Invalid QR Code format", Toast.LENGTH_SHORT).show()
+            }
+        } else {
+            Toast.makeText(this, "Scan cancelled", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    /** [수신자] 1. P2P 그룹 생성 요청 (QR 생성 버튼 클릭 시) */
+    private fun createGroup() {
+        // API 33 이상은 NEARBY_WIFI_DEVICES, 미만은 ACCESS_FINE_LOCATION 권한이 필요할 수 있으나,
+        // 여기서는 기존 코드의 권한 체크 로직을 재사용합니다.
+        if (ActivityCompat.checkSelfPermission(
+                this,
+                Manifest.permission.NEARBY_WIFI_DEVICES
+            ) == PackageManager.PERMISSION_GRANTED || Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU
+        ) {
+            // 기존 연결이 있다면 해제
+            manager.removeGroup(channel, object : WifiP2pManager.ActionListener {
+                override fun onSuccess() {
+                    Log.d("WiFiDirect", "Previous group removed. Creating new group.")
+                    // 그룹 생성 시작
+                    startGroupCreation()
+                }
+                override fun onFailure(reason: Int) {
+                    Log.d("WiFiDirect", "Previous group removal failed ($reason). Creating new group anyway.")
+                    // 실패해도 새 그룹 생성 시도
+                    startGroupCreation()
+                }
+            })
+        } else {
+            Toast.makeText(this, "NEARBY_WIFI_DEVICES 권한이 필요합니다.", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    /** [수신자] 1-1. 실제 그룹 생성 로직 */
+    private fun startGroupCreation() {
+        if (ActivityCompat.checkSelfPermission(
+                this,
+                Manifest.permission.NEARBY_WIFI_DEVICES
+            ) != PackageManager.PERMISSION_GRANTED && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
+        ) {
+            Toast.makeText(this, "권한이 없어 그룹을 생성할 수 없습니다.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        manager.createGroup(channel, object : WifiP2pManager.ActionListener {
+            override fun onSuccess() {
+                Toast.makeText(this@MainActivity, "Group creation started...", Toast.LENGTH_SHORT).show()
+                // 성공 시 GroupInfoListener(onGroupInfoAvailable)가 호출되길 기다림
+                // [!] 중요: createGroup() 성공 직후가 아니라,
+                // WIFI_P2P_CONNECTION_CHANGED_ACTION 브로드캐스트 수신 후
+                // requestConnectionInfo 또는 requestGroupInfo를 호출해야 합니다.
+                // (WiFiDirectBroadcastReceiver에서 처리)
+            }
+            override fun onFailure(reason: Int) {
+                Toast.makeText(this@MainActivity, "Group creation failed: $reason", Toast.LENGTH_SHORT).show()
+            }
+        })
+    }
+
+
+    /** [수신자] 2. 그룹 정보 콜백 (BroadcastReceiver가 requestGroupInfo() 호출 시) */
+    override fun onGroupInfoAvailable(group: WifiP2pGroup?) {
+        if (group != null) {
+            val ssid = group.networkName
+            val passphrase = group.passphrase
+            Log.d("WiFiDirect", "Group Info Available. SSID: $ssid, Pass: $passphrase")
+
+            // 3. QR 코드 생성
+            val qrData = "WIFI:T:WPA;S:$ssid;P:$passphrase;;"
+            generateQRCode(qrData)
+
+            // UI 업데이트 (서버 역할)
+            connectionInfoTextView.text = "Role: Server (Group Owner)\nSSID: $ssid"
+
+            // TODO: 여기서 startServerTask() (서버 소켓 열기)를 호출해야 합니다.
+
+        } else {
+            Log.d("WiFiDirect", "Group Info is null")
+        }
+    }
+
+    /** [수신자] 3. QR 코드 비트맵 생성 및 표시 */
+    private fun generateQRCode(text: String) {
+        try {
+            val writer = MultiFormatWriter()
+            val bitMatrix = writer.encode(text, BarcodeFormat.QR_CODE, 250, 250)
+            val width = bitMatrix.width
+            val height = bitMatrix.height
+            val bmp = Bitmap.createBitmap(width, height, Bitmap.Config.RGB_565)
+            for (x in 0 until width) {
+                for (y in 0 until height) {
+                    bmp.setPixel(x, y, if (bitMatrix[x, y]) android.graphics.Color.BLACK else android.graphics.Color.WHITE)
+                }
+            }
+            qrCodeImageView.setImageBitmap(bmp)
+            qrCodeImageView.visibility = ImageView.VISIBLE // QR 코드 보여주기
+            peerListView.visibility = ListView.GONE // 목록 숨기기
+            emptyView.visibility = TextView.GONE // 빈 텍스트 숨기기
+        } catch (e: Exception) {
+            e.printStackTrace()
+            Toast.makeText(this, "Failed to generate QR code", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    /** [송신자] 1. QR 스캐너 시작 */
+    private fun startQRScanner() {
+        // QR 스캔 시 기존 연결/그룹 해제
+        manager.removeGroup(channel, null)
+
+        val options = ScanOptions()
+        options.setPrompt("Scan a Wi-Fi Direct QR Code")
+        options.setBeepEnabled(true)
+        options.setOrientationLocked(false)
+        qrScannerLauncher.launch(options)
+    }
+
+    /** [송신자] 2. (Android 10 이상) 스캔한 정보로 네트워크 연결 */
+    private fun connectToWifiDirectGroup(ssid: String, passphrase: String) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val specifier = WifiNetworkSpecifier.Builder()
+                .setSsid(ssid)
+                .setWpa2Passphrase(passphrase)
+                .build()
+
+            val request = NetworkRequest.Builder()
+                .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
+                .addCapability(NetworkCapabilities.NET_CAPABILITY_NOT_RESTRICTED)
+                .setNetworkSpecifier(specifier)
+                .build()
+
+            val connectivityManager = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+
+            val networkCallback = object : ConnectivityManager.NetworkCallback() {
+                override fun onAvailable(network: Network) {
+                    super.onAvailable(network)
+                    Log.d("WiFiDirect", "Network connected! $network")
+                    // [!] 연결 성공! 이 네트워크(GO)에 소켓 연결 시도
+                    // GO의 IP는 거의 항상 192.168.49.1 입니다.
+                    runOnUiThread {
+                        connectionInfoTextView.text = "Role: Client\nConnected to GO: $ssid"
+                        // TODO: startClientSocketTask("192.168.49.1")
+                    }
+                }
+                override fun onUnavailable() {
+                    super.onUnavailable()
+                    Log.d("WiFiDirect", "Network connection unavailable.")
+                    runOnUiThread {
+                        Toast.makeText(this@MainActivity, "Connection failed or timed out", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+            // 네트워크 연결 요청 (타임아웃과 함께)
+            connectivityManager.requestNetwork(request, networkCallback, 30000) // 30초 타임아웃
+        } else {
+            // (Android 9 이하에서는 WifiManager.addNetwork() 등 레거시 방식 사용 필요)
+            Toast.makeText(this, "QR connection only supported on Android 10+", Toast.LENGTH_LONG).show()
+        }
+    }
+    // --- [ 함수 추가 끝 ] ---
+
+} // <--
