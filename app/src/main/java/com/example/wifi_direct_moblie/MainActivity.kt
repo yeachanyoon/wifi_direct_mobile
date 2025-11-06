@@ -16,6 +16,7 @@ import android.widget.ArrayAdapter
 import android.widget.Button
 import android.widget.ListView
 import android.widget.Toast
+import android.widget.TextView
 // import androidx.core.content.ContextCompat.getSystemService // 원본 파일에 있었으나 사용되지 않음
 
 class MainActivity : AppCompatActivity(), WifiP2pManager.PeerListListener, WifiP2pManager.ConnectionInfoListener {
@@ -61,7 +62,9 @@ class MainActivity : AppCompatActivity(), WifiP2pManager.PeerListListener, WifiP
         // 간단한 기본 리스트 아이템 템플릿 사용
         listAdapter = ArrayAdapter(this, android.R.layout.simple_list_item_1, peerDeviceNames)
         peerListView.adapter = listAdapter
-
+        val emptyTextView = findViewById<TextView>(R.id.emptyView)
+        // [!] ListView에 emptyView를 설정합니다.
+        peerListView.emptyView = emptyTextView
         // [!] 리스트 뷰 항목 클릭 리스너 설정
         peerListView.setOnItemClickListener { parent, view, position, id ->
             // 사용자가 클릭한 위치(position)의 기기를 가져옴
