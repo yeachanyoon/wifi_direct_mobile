@@ -42,27 +42,27 @@ class MainActivity : AppCompatActivity(), WifiP2pManager.PeerListListener, WifiP
                     arrayOf(Manifest.permission.NEARBY_WIFI_DEVICES),
                     1 // 요청 코드
                 )
-                // P2P 매니저와 채널 초기화
-                manager = getSystemService(Context.WIFI_P2P_SERVICE) as WifiP2pManager
-                channel = manager.initialize(this, Looper.getMainLooper(), null)
-            }
 
-            // 4단계에서 만든 리시버 클래스 초기화
-            receiver = WiFiDirectBroadcastReceiver(manager, channel, this)
-
-            // 리시버가 수신할 인텐트 필터 설정
-            intentFilter.addAction(WifiP2pManager.WIFI_P2P_STATE_CHANGED_ACTION)
-            intentFilter.addAction(WifiP2pManager.WIFI_P2P_PEERS_CHANGED_ACTION)
-            intentFilter.addAction(WifiP2pManager.WIFI_P2P_CONNECTION_CHANGED_ACTION)
-            intentFilter.addAction(WifiP2pManager.WIFI_P2P_THIS_DEVICE_CHANGED_ACTION)
-
-            // [UI] 버튼 클릭 시 피어 탐색 시작 (activity_main.xml에 버튼 추가 필요)
-            val discoverButton = findViewById<Button>(R.id.discoverButton) // 예시 ID
-            discoverButton.setOnClickListener {
-                startPeerDiscovery()
-            }
+        }
+            // P2P 매니저와 채널 초기화
+            manager = getSystemService(Context.WIFI_P2P_SERVICE) as WifiP2pManager
+            channel = manager.initialize(this, Looper.getMainLooper(), null)
         }
 
+        // 4단계에서 만든 리시버 클래스 초기화
+        receiver = WiFiDirectBroadcastReceiver(manager, channel, this)
+
+        // 리시버가 수신할 인텐트 필터 설정
+        intentFilter.addAction(WifiP2pManager.WIFI_P2P_STATE_CHANGED_ACTION)
+        intentFilter.addAction(WifiP2pManager.WIFI_P2P_PEERS_CHANGED_ACTION)
+        intentFilter.addAction(WifiP2pManager.WIFI_P2P_CONNECTION_CHANGED_ACTION)
+        intentFilter.addAction(WifiP2pManager.WIFI_P2P_THIS_DEVICE_CHANGED_ACTION)
+
+        // [UI] 버튼 클릭 시 피어 탐색 시작 (activity_main.xml에 버튼 추가 필요)
+        val discoverButton = findViewById<Button>(R.id.discoverButton) // 예시 ID
+        discoverButton.setOnClickListener {
+            startPeerDiscovery()
+        }
     }
     // 피어 탐색 시작
     private fun startPeerDiscovery() {
