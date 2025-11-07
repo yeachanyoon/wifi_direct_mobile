@@ -5,6 +5,7 @@ import android.content.Intent
 import android.net.wifi.p2p.WifiP2pManager
 import android.widget.Toast
 import android.net.NetworkInfo
+import android.net.wifi.p2p.WifiP2pDevice
 
 class WiFiDirectBroadcastReceiver(
     private val manager: WifiP2pManager,
@@ -48,9 +49,14 @@ class WiFiDirectBroadcastReceiver(
             }
 
             // 이 기기의 P2P 정보 변경
-            WifiP2pManager.WIFI_P2P_THIS_DEVICE_CHANGED_ACTION -> {
-                // ...
-            }
+            // [!] 이 기기의 P2P 정보 변경 (이 케이스 추가)
+            WifiP2pManager.WIFI_P2P_THIS_DEVICE_CHANGED_ACTION -> { // intentFilter에 이미 있음
+                val device = intent.getParcelableExtra<WifiP2pDevice>(WifiP2pManager.EXTRA_WIFI_P2P_DEVICE)
+                if (device != null) {
+                    // MainActivity에 이 기기의 MAC 주소 전달
+                    activity.setMyDeviceAddress(device)
+                }
         }
+     }
     }
 }

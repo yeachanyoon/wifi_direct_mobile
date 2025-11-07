@@ -25,6 +25,7 @@ import android.net.Network // [!] import 추가
 import android.net.NetworkCapabilities // [!] import 추가
 import android.net.NetworkRequest // [!] import 추가
 import android.net.wifi.WifiNetworkSpecifier // [!] import 추가
+import org.json.JSONObject // [!] JSON 처리를 위해 import 추가
 // import androidx.core.content.ContextCompat.getSystemService // 원본 파일에 있었으나 사용되지 않음
 
 class MainActivity : AppCompatActivity(), WifiP2pManager.PeerListListener, WifiP2pManager.ConnectionInfoListener, WifiP2pManager.GroupInfoListener {
@@ -44,6 +45,9 @@ class MainActivity : AppCompatActivity(), WifiP2pManager.PeerListListener, WifiP
     lateinit var connectionInfoTextView: TextView
     lateinit var qrCodeImageView: ImageView //이미지
     lateinit var emptyView: TextView
+    // [!] 1. 내 MAC 주소를 저장할 변수 추가
+    private var myMacAddress: String? = null
+
 
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -67,7 +71,7 @@ class MainActivity : AppCompatActivity(), WifiP2pManager.PeerListListener, WifiP
         // 버튼 리스너 설정
         val discoverButton = findViewById<Button>(R.id.discoverButton)
         discoverButton.setOnClickListener {
-            startPeerDiscovery()
+            generateMacAddressQRCode()
         }
         // --- [수정 완료] ---
         // --- [!] QR 버튼 리스너 추가 ---
@@ -254,27 +258,39 @@ class MainActivity : AppCompatActivity(), WifiP2pManager.PeerListListener, WifiP
     // [!] QR 스캐너 실행 및 결과 처리를 위한 런처
     private val qrScannerLauncher = registerForActivityResult(ScanContract()) { result ->
         if (result.contents != null) {
-            // QR 코드 스캔 성공
             val scannedData = result.contents
             Log.d("WiFiDirect", "Scanned data: $scannedData")
 
-            // "WIFI:T:WPA;S:SSID;P:PASSWORD;;" 형식 파싱 시도
             try {
-                // S:(SSID) 와 P:(PASSWORD) 사이의 값을 추출
-                val ssid = scannedData.substringAfter("S:").substringBefore(";")
-                val password = scannedData.substringAfter("P:").substringBefore(";")
+                if (scannedData.startsWith("WIFI:T:WPA;")) {
+                    // --- Flow 1: Group Owner QR 코드 (SSID/PW) ---
+                    val ssid = scannedData.substringAfter("S:").substringBefore(";")
+                    val password = scannedData.substringAfter("P:").substringBefore(";")
+                    Toast.makeText(this, "Connecting to $ssid...", Toast.LENGTH_SHORT).show()
+                    connectToWifiDirectGroup(ssid, password) // GO(핫스팟) 연결
 
-                if (ssid.isEmpty() || password.isEmpty()) {
-                    throw Exception("Invalid format")
+                } else if (scannedData.startsWith("{\"mac_address\":")) {
+                    // --- [!] Flow 2: MAC 주소 JSON QR 코드 ---
+                    val json = JSONObject(scannedData)
+                    val macAddress = json.getString("mac_address")
+
+                    if (macAddress.isEmpty()) throw Exception("Invalid JSON format")
+
+                    Toast.makeText(this, "Connecting to $macAddress...", Toast.LENGTH_SHORT).show()
+
+                    // 스캔한 MAC 주소로 P2P 연결 시도
+                    val device = WifiP2pDevice()
+                    device.deviceAddress = macAddress
+
+                    // 6단계에서 만든 connectToPeer 함수 재활용
+                    connectToPeer(device)
+
+                } else {
+                    throw Exception("Unknown QR Code format")
                 }
-
-                Toast.makeText(this, "Connecting to $ssid...", Toast.LENGTH_SHORT).show()
-                // 5단계: 스캔한 정보로 Wi-Fi Direct 그룹에 연결
-                connectToWifiDirectGroup(ssid, password)
-
             } catch (e: Exception) {
-                Log.e("WiFiDirect", "Invalid QR Code format: $scannedData", e)
-                Toast.makeText(this, "Invalid QR Code format", Toast.LENGTH_SHORT).show()
+                Log.e("WiFiDirect", "Invalid or unknown QR Code", e)
+                Toast.makeText(this, "Invalid or unknown QR Code", Toast.LENGTH_SHORT).show()
             }
         } else {
             Toast.makeText(this, "Scan cancelled", Toast.LENGTH_SHORT).show()
@@ -430,6 +446,37 @@ class MainActivity : AppCompatActivity(), WifiP2pManager.PeerListListener, WifiP
         } else {
             // (Android 9 이하에서는 WifiManager.addNetwork() 등 레거시 방식 사용 필요)
             Toast.makeText(this, "QR connection only supported on Android 10+", Toast.LENGTH_LONG).show()
+        }
+    }
+    // [!] 4. Receiver가 호출할 함수 추가
+    /** BroadcastReceiver가 이 기기의 P2P 정보를 설정하기 위해 호출 */
+    fun setMyDeviceAddress(device: WifiP2pDevice) {
+        myMacAddress = device.deviceAddress
+        Log.d("WiFiDirect", "My MAC address set: $myMacAddress")
+    }
+
+    // [!] 5. MAC 주소용 QR 생성 함수 추가
+    private fun generateMacAddressQRCode() {
+        if (myMacAddress != null) {
+            try {
+                // 1. JSON 객체 생성
+                val json = JSONObject()
+                json.put("mac_address", myMacAddress)
+                val jsonString = json.toString()
+
+                // 2. 기존 QR 생성 함수 호출
+                generateQRCode(jsonString) // (이 함수는 이미 있음)
+
+                Log.d("WiFiDirect", "Generated MAC QR Code: $jsonString")
+                connectionInfoTextView.text = "My MAC: $myMacAddress\n(Ready to be scanned)"
+
+            } catch (e: Exception) {
+                Toast.makeText(this, "Failed to create JSON", Toast.LENGTH_SHORT).show()
+            }
+        } else {
+            // 앱이 켜진 직후 아직 MAC 주소를 못 받았을 때
+            Toast.makeText(this, "Device info is loading... Try again.", Toast.LENGTH_SHORT).show()
+            // (이 경우, 시스템에서 WIFI_P2P_THIS_DEVICE_CHANGED_ACTION 방송을 아직 받지 못한 것)
         }
     }
     // --- [ 함수 추가 끝 ] ---
